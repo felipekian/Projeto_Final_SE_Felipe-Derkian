@@ -193,6 +193,7 @@ void verificaDistancia(){
     while(t < 20){
       sensor_ultrassonico();      
       valuesD[ t%10 ] = distanciaAtual;
+      t++;
       delay(10);
     }
     
@@ -225,7 +226,7 @@ void modoAtivo(){
   while(lerPIR==HIGH && distanciaAtual<(DistanciaMaximaSensorUltrassonico*0.90) ){
     TempoLigado = millis()/1000;
     verificarSensores();
-    calcularConsumo(20);
+    calcularConsumo(10);
     verificaDistancia();
     delay(10000);
   }
