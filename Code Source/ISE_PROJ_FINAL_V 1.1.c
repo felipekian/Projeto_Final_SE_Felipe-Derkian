@@ -11,7 +11,7 @@
 LiquidCrystal lcd(13, 15, 5, 4, 3, 2);
 
 /* Configuração */
-int ja_configurado = 0;
+int jaConfigurado = 0;
 const int tempoDeConfig = 10;
 
 /* Contagem de tempo */
@@ -19,14 +19,14 @@ int TempoLigado = 0;
 int segundosEconomia = 0;
 
 /* Pegar distância do ambiente para calcular uma média e usar como maior distância */
-int maxDistUS = 0;
+int DistanciaMaximaSensorUltrassonico = 0;
 
 
 /* Configuração do Sensor Ultrassonico */
 const int pino_trigger = 12;
 const int pino_echo    = 14;
 Ultrasonic ultrasonic(pino_trigger, pino_echo);
-float cmMsec=0.0;
+int distanciaAtual=0.0;
 
 
 /* Configuração do Sensor de temperatura e umidade*/
@@ -34,7 +34,8 @@ const int DHTPIN = 10; // pino que estamos conectado
 #define DHTTYPE DHT11 // DHT 11
 uint32_t delayMS;
 DHT_Unified dht(DHTPIN, DHTTYPE);
-int umidade=0, temperatura=0;
+int umidade=0;
+int temperatura=0;
 
 /* Rele */
 const int Rele_R1 = 16;
@@ -58,21 +59,20 @@ void configLCD(){
 
 
 /* Configuração da fase de calibragem do sistema */
-void configLCDConfigurando(int tempSec){
+void configLCDConfigurando(int tempoSegundos){
   //lcd.clear();
   
   lcd.begin(16, 2);
   lcd.setCursor(0, 0);
   lcd.print("CONFIGURANDO ...");
   lcd.setCursor(0, 1);
-  lcd.printf("%d SEGUNDOS", tempoDeConfig-tempSec);
+  lcd.printf("%d SEGUNDOS", tempoDeConfig-tempoSegundos);
 }
 
 
 /* Configuração da fase de imprimir as informações no LCD */
 void print_lcd(){
-  lcd.clear();
-  
+  lcd.clear();  
   lcd.begin(16, 2);
   lcd.setCursor(0, 0);
   
@@ -84,16 +84,12 @@ void print_lcd(){
     lcd.printf("%dC L%dH E%dH", temperatura, TempoLigado/3600, segundosEconomia/3600); 
   }else{
     lcd.printf("%dC L%dD E%dD", temperatura, TempoLigado/86400, segundosEconomia/86400); 
-  }
-   
+  }  
   
   lcd.setCursor(0, 1);  
-  //lcd.printf("%d  %d",millis() / 1000, (millis() / 1000) % 100);
-  int distancia = cmMsec;
+  int distancia = distanciaAtual;
 
   lcd.printf("%d%% %dCm %.1fA",umidade , distancia, totalCorrente/1000);
-  
-
 }
 
 
@@ -119,53 +115,42 @@ void umidadeEtemperatura(){
 /* get distancia */
 void sensor_ultrassonico(){
   long microsec = ultrasonic.timing();
-  cmMsec = ultrasonic.convert(microsec, Ultrasonic::CM);
+  distanciaAtual = ultrasonic.convert(microsec, Ultrasonic::CM);
   
     Serial.print("DISTANCIA: ");
-    Serial.print(maxDistUS);
+    Serial.print(DistanciaMaximaSensorUltrassonico);
     Serial.print(" -> ");
-    Serial.println(cmMsec);
+    Serial.println(distanciaAtual);
 }
 
 /* get presença */
 void LerSensorPIR(){
-    lerPIR = digitalRead(PIR);
-    
+    lerPIR = digitalRead(PIR);    
 }
 
 
 
 /* capturação de distancias para calibragem */
-void setMaxUS(){
-  int tempSec = 0;
+void setMaiorDistancia(){
+  int tempoSegundos = 0;
   int v[20] = {0};
   int i = 0;
-  while( tempSec < tempoDeConfig ){                
-    tempSec = millis() / 1000;        
+  
+  while( tempoSegundos < tempoDeConfig ){                
+    tempoSegundos = millis() / 1000;        
     
     sensor_ultrassonico();
-    int distanceNow = cmMsec;
-
-    v[i] = distanceNow;    
-
+    int distanciaAgora = distanciaAtual;
+    v[i] = distanciaAgora;    
     i=(++i)%20 ;
-    
-    /*
-    if( distanceNow > maxDistUS ){
-      maxDistUS = distanceNow;  
-    }
-    */
-
-    
-    configLCDConfigurando(tempSec);
-    
+    configLCDConfigurando(tempoSegundos);
     delay(200);
   }
-  maxDistUS = v[10];
+  DistanciaMaximaSensorUltrassonico = ((v[4]+v[9]+v[14]+v[19])/4);
 }
 
 /* função que ativa uma rodada de captura de dados dos sensores */
-void actions(){
+void verificarSensores(){
   umidadeEtemperatura();
   sensor_ultrassonico();
   LerSensorPIR();
@@ -173,10 +158,10 @@ void actions(){
 }
 
 /* calcular corrente */
-void calcularCorrente(){
+void calcularConsumo(int tempo){
   emon1.calcVI(20,100);
   double currentDraw = emon1.Irms;
-  totalCorrente += (currentDraw * 3);
+  totalCorrente += (currentDraw * tempo);
 }
 
 
@@ -201,34 +186,61 @@ void setup() {
   emon1.current(sensorCorrente, CURRENT_CAL);
 }
 
-/* Programa principal */
-void loop() {
+void verificaDistancia(){
+  if(distanciaAtual > DistanciaMaximaSensorUltrassonico){
+    int t = 0;
+    int valuesD[10];  
+    while(t < 20){
+      sensor_ultrassonico();      
+      valuesD[ t%10 ] = distanciaAtual;
+      delay(10);
+    }
     
-  if(ja_configurado==0){
-    ja_configurado = 1;
-    Rele_R1_Desligado();
-    setMaxUS();    
+    distanciaAtual = (valuesD[0]+valuesD[5])/2;
   }
-    
-  while(1){        
-    Rele_R1_Desligado();    
-    while( cmMsec > (maxDistUS*0.95)){                    
-        segundosEconomia = millis() / 1000;
-        TempoLigado = millis() / 1000;
-        calcularCorrente();
-        actions();
-        delay(3000);        
-    }
-
-    Rele_R1_Ligado();
-    if( cmMsec < (maxDistUS*0.95)){
-      while(lerPIR==HIGH && cmMsec<(maxDistUS*0.95) ){
-        calcularCorrente();
-        TempoLigado = millis() / 1000;
-        actions();
-        delay(3000);        
-      }
-    }
-  }  
 }
 
+void modoConfiguracao(){
+  Serial.println("MODO CONFIGURACAO");
+  if(!jaConfigurado){
+    jaConfigurado = 1;
+    Rele_R1_Desligado();
+    setMaiorDistancia();
+  } 
+}
+
+void modoStadby(){
+  Serial.println("NAO ATIVO");
+  while(distanciaAtual > (DistanciaMaximaSensorUltrassonico*0.90)){                    
+    segundosEconomia = millis() / 1000;
+    TempoLigado = millis() / 1000;    
+    verificarSensores();
+    calcularConsumo(5);
+    delay(5000);    
+  }
+}
+
+void modoAtivo(){
+  Serial.println("ATIVO");
+  while(lerPIR==HIGH && distanciaAtual<(DistanciaMaximaSensorUltrassonico*0.90) ){
+    TempoLigado = millis()/1000;
+    verificarSensores();
+    calcularConsumo(20);
+    verificaDistancia();
+    delay(10000);
+  }
+}
+
+/* Programa principal */
+void loop(){    
+  if(!jaConfigurado)
+    modoConfiguracao();
+
+  while(1){      
+    Rele_R1_Desligado();
+    modoStadby();
+  
+    Rele_R1_Ligado();
+    modoAtivo();      
+  }  
+}
